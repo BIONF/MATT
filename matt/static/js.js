@@ -111,7 +111,7 @@ $(function() {
             } else if ((typeof alignmentFile !== "undefined") && (typeof treeFile === "undefined")) {
                 if (typeof senddataAlignment.fileData !== "undefined") {
                     $("#warning-modal-label").text("Only an alignment is provided!");
-                    $("#warning-modal-body").text("Please also provide an initial tree, otherwise MATT will calculate the ML-tree. This might take some time!");
+                    $("#warning-modal-body").text("Please also provide an tree file, otherwise MATT will calculate the ML-tree. This might take some time!");
                     $("#warning-modal-continue-button").text("Compute tree");
                     $("#warning-modal-cancel-button").text("Upload tree");
                     $("#warning-modal").modal("show");
@@ -135,7 +135,7 @@ $(function() {
             } else if ((typeof alignmentFile === "undefined") && (typeof treeFile !== "undefined")) {
                 if (typeof senddataTree.fileData !== "undefined") {
                     $("#warning-modal-label").text("Only a tree is provided!");
-                    $("#warning-modal-body").text("Please also provide an alignment, otherwise MATT will not be able to calculate tests!");
+                    $("#warning-modal-body").text("Please also provide an alignment file, otherwise MATT will not be able to calculate tests!");
                     $("#warning-modal-continue-button").text("Show tree");
                     $("#warning-modal-cancel-button").text("Upload alignment");
                     $("#warning-modal").modal("show");
@@ -163,10 +163,6 @@ $(function() {
 
     });
 
-    $("#example-import").click(function() {
-        load("post", "example");
-    });
-
     let dnaProtein;
     $("#dna").click(function() {
         $("#dna-options").show();
@@ -178,9 +174,33 @@ $(function() {
         $("#dna-options").hide();
         dnaProtein = "protein";
     });
+
+    $("#example-import").click(function() {
+        $("#dna").trigger("click");
+        optionsJSON = {
+            "enable-lengths": $("#enable-lengths")[0].checked,
+            "working-directory": $("#working-directory").val()
+        }
+        if (dnaProtein == "dna") {
+            optionsJSON["dna-protein"] = "dna";
+            optionsJSON["dna-bsr"] = $("#selectBSR").val();
+            optionsJSON["dna-bf"] = $("#selectBF").val();
+            optionsJSON["dna-rhas"] = $("#selectDNARHAS").val();
+        } else if (dnaProtein == "protein") {
+            optionsJSON["dna-protein"] = "protein";
+            optionsJSON["protein-aaerm"] = $("#selectAAERM").val();
+            optionsJSON["protein-pmm"] = $("#selectPMM").val();
+            optionsJSON["protein-aaf"] = $("#selectAAF").val();
+            optionsJSON["protein-rhas"] = $("#selectAARHAS").val();
+        }
+        options(optionsJSON);
+        load("post", "example");
+    });
+
     $("#save-options").click(function() {
         optionsJSON = {
-            "enable-lengths": $("#enable-lengths")[0].checked
+            "enable-lengths": $("#enable-lengths")[0].checked,
+            "working-directory": $("#working-directory").val()
         }
         if (dnaProtein == "dna") {
             optionsJSON["dna-protein"] = "dna";
@@ -201,9 +221,15 @@ $(function() {
         $.each($("#select-snapshots option:selected"), function(){
             snapshots.push($(this).val());
         });
-        tests({
-            "snapshots": snapshots
-        });
+        if (snapshots.length != 0) {
+            tests({
+                "snapshots": snapshots
+            });
+        } else {
+            $("#info-modal-label").text("No snapshots selected!")
+            $("#info-modal-body").text("Please select at least one snapshot first!")
+            $("#info-modal").modal("show");
+        }
     });
 
     $(".btn").mouseup(function(){
@@ -219,6 +245,7 @@ $(function() {
             } else {
                 $("#enable-lengths").prop("checked", false);
             }
+            $("#working-directory").val(data["working_directory"])
             if (data["dna_protein"] == "dna") {
                 dnaProtein = "dna";
                 $("#dna").prop("checked", true);
@@ -304,6 +331,9 @@ $(function() {
 
     function save() {
         descriptionValue = $("#snapshot-label").val();
+        if (descriptionValue == "") {
+            descriptionValue = trees[counter_of_trees - 1][0];
+        }
         trees[counter_of_trees - 1][2] = descriptionValue;
         snapshotTrees.push(trees[counter_of_trees - 1]);
         snapshots(snapshotTrees);
@@ -362,6 +392,14 @@ $(function() {
         $("#info-modal-body").text("Tree toplogy tests are being performed now. A progress bar will be added soon!")
         $("#info-modal").modal("show");
         $.post("tests", data, function(data) {
+
+            if (data == "NO") {
+                $("#info-modal-label").text("Initial tree selected!")
+                $("#info-modal-body").text("When selecting only one tree, please do not select the initally provided tree!")
+                $("#info-modal").modal("show");
+                return;
+            }
+
             data = JSON.parse(data);
 
             var testData = new Array(10);
@@ -1318,11 +1356,18 @@ $(function() {
             text = atob(data.target.result.split("base64,")[1]);
             if ((text.match(/[ACGT]/g) || []).length > text.length / 2) {
                 $("#dna").trigger("click");
+                $("#info-modal-label").text("DNA file detected!");
+                $("#info-modal-body").text("A DNA file has been detected and the options have been set to DNA accordingly!");
+                $("#info-modal").modal("show");
             } else {
                 $("#protein").trigger("click");
+                $("#info-modal-label").text("Protein file detected!");
+                $("#info-modal-body").text("A protein file has been detected and the options have been set to protein accordingly!");
+                $("#info-modal").modal("show");
             }
             optionsJSON = {
-                "enable-lengths": $("#enable-lengths")[0].checked
+                "enable-lengths": $("#enable-lengths")[0].checked,
+                "working-directory": $("#working-directory").val()
             }
             if (dnaProtein == "dna") {
                 optionsJSON["dna-protein"] = "dna";
@@ -1347,17 +1392,6 @@ $(function() {
     $("#tree-file:file").change(function (){
         $("#tree-file-button").html('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-file-earmark-check" viewBox="0 0 16 16"><path d="M10.854 7.854a.5.5 0 0 0-.708-.708L7.5 9.793 6.354 8.646a.5.5 0 1 0-.708.708l1.5 1.5a.5.5 0 0 0 .708 0l3-3z"/><path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/></svg>');
         $('label[for="tree-file-button"]').html($(this)[0].files[0].name);
-        var path = (window.URL || window.webkitURL).createObjectURL($(this)[0].files[0]);
-        console.log('path', path);
-    });
-
-    $("#working-directory-button").on("click", function () {
-        $("#working-directory").trigger("click");
-    });
-    $("#working-directory:file").change(function (){
-        $("#working-directory-button").html('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-folder-check" viewBox="0 0 16 16"><path d="m.5 3 .04.87a1.99 1.99 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9v-1H2.826a1 1 0 0 1-.995-.91l-.637-7A1 1 0 0 1 2.19 4h11.62a1 1 0 0 1 .996 1.09L14.54 8h1.005l.256-2.819A2 2 0 0 0 13.81 3H9.828a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 6.172 1H2.5a2 2 0 0 0-2 2zm5.672-1a1 1 0 0 1 .707.293L7.586 3H2.19c-.24 0-.47.042-.683.12L1.5 2.98a1 1 0 0 1 1-.98h3.672z"/><path d="M15.854 10.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.707 0l-1.5-1.5a.5.5 0 0 1 .707-.708l1.146 1.147 2.646-2.647a.5.5 0 0 1 .708 0z"/></svg>');
-        $('label[for="working-directory-button"]').html($(this)[0].files[0].webkitRelativePath.split("/")[0]);
-        console.log($(this));
         var path = (window.URL || window.webkitURL).createObjectURL($(this)[0].files[0]);
         console.log('path', path);
     });
