@@ -344,11 +344,9 @@ $(function () {
         number_of_trees = trees.length;
         if (typeof xhr !== "undefined") {
             counter_of_trees = parseInt(counter_of_trees);
-            console.log(xhr.getResponseHeader("Length"));
             if (!(xhr.getResponseHeader("Length"))) {
                 counter_of_trees += 1;
             }
-            console.log(counter_of_trees);
             set_testing(xhr.getResponseHeader("Testing"));
         }
         if (counter_of_trees > 1) {
@@ -360,9 +358,7 @@ $(function () {
         if (counter_of_trees == number_of_trees) {
             $("#redo-button").prop("disabled", true);
         }
-        console.log("Building tree " + counter_of_trees + " of " + number_of_trees);
         console.log(trees);
-        console.log(snapshotTrees);
         if (typeof xhr !== "undefined" && xhr.getResponseHeader("Length")) {
             draw(JSON.parse(trees[counter_of_trees - 1][2]));
         } else {
@@ -590,6 +586,7 @@ $(function () {
      * @param data tree informations
      */
     function draw(data) {
+        console.log(data);
         $("#outgroup-button").css("display", "none");
 
         xBefore = getTransform("x");
@@ -1125,8 +1122,8 @@ $(function () {
                 newScale = currentScale - step;
             }
 
-            moveX = currentX;// + (currentX - posX) * (newScale - currentScale);
-            moveY = currentY;// + (currentY - posY) * (newScale - currentScale);
+            moveX = currentX - ((newScale / currentScale) - 1) * (posX - currentX);
+            moveY = currentY - ((newScale / currentScale) - 1) * (posY - currentY);
 
             setTransform("scale", newScale, moveX, moveY);
         }
@@ -1186,7 +1183,7 @@ $(function () {
             }*/
 
             g.transform("translate(" + translateX + " " + translateY + ") scale(" + scale + " " + scale + ")");
-            minimapWindow.transform("translate(" + -(translateX/scale) / ratio + " " + -(translateY/scale) / ratio + ") scale(" + 1 / scale  + " " +  1 / scale + ")");
+            minimapWindow.transform("translate(" + -(translateX / scale) / ratio + " " + -(translateY / scale) / ratio + ") scale(" + (1 / scale)  + " " +  (1 / scale) + ")");
         }
 
         /**
@@ -1328,6 +1325,11 @@ $(function () {
          * @param value the searched leaf
          */
         function search(value) {
+            if (!(enableLengths)) {
+                data = JSON.parse(trees[counter_of_trees - 1][1]);
+            } else {
+                data = JSON.parse(trees[counter_of_trees - 1][2]);
+            }
             data.some(function (item, index, array) {
                 if (item.name != "None" && item.name.toLowerCase().includes(value.toLowerCase())) {
                     if (found) {
@@ -1337,7 +1339,12 @@ $(function () {
                     if (found) {
                         found.attr('fill', 'red');
                     }
-                    setTransform("translate", -(maxX - offset) * scale + maxWidth / 2, -((index + 1) * scaleY) * scale + maxHeight / 2);
+                    console.log(item, index);
+                    if (!(optionsJSON["align-labels"])) {
+                        setTransform("translate", -(item["total_length"] * scaleX + offset) + maxWidth / 2, -((index + 1) * scaleY) * scale + maxHeight / 2);
+                    } else {
+                        setTransform("translate", -(maxX - offset) * scale + maxWidth / 2, -((index + 1) * scaleY) * scale + maxHeight / 2);
+                    }
                     return true;
                 }
             });
