@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
-from flask import Flask, make_response, render_template, request, session, send_from_directory
+from flask import Flask, make_response, render_template, request, session, send_from_directory, send_file
 from base64 import b64decode
 from matt.tree import Tree
 from json import dumps
@@ -25,6 +25,7 @@ import configparser
 import webbrowser
 import threading
 import time
+import zipfile
 
 # TODO constants like app_location to APP_LOCATION
 app = Flask(__name__, static_url_path="/static")
@@ -41,6 +42,8 @@ else:
 os.chmod(os.path.join(app_location, "bin", "iqtree" + addition), 0o755)
 config = configparser.ConfigParser()
 config_path = os.path.join(root_folder, "config.ini")
+
+jobs = {}
 
 
 @app.route("/", methods=["GET"])
@@ -106,20 +109,45 @@ def download(tree_id):
     """
     Downloads the given tree
     :param tree_id: the tree id in the database
-    :return: tree in newick format
+    :return: tree in newick format or zip with two trees in newick format
     """
-    path = os.path.join(session["working-directory"], "download.nck")
-    file = open(path, "w")
     conn = sqlite3.connect(root_folder + 'trees.db')
     c = conn.cursor()
-    tree_db = c.execute("SELECT json, description FROM trees WHERE id = ?", (tree_id,)).fetchall() #TODO make branch tree downloadable?
+    tree_db = c.execute("SELECT json, json_lengths, description FROM trees WHERE id = ?", (tree_id,)).fetchall()
+    print(tree_db)
     tree_json = tree_db[0][0]
-    tree_description = tree_db[0][1]
-    tree = Tree(tree_json).to_newick()
-    file.write(tree + "\n")
-    file.close()
-    return send_from_directory(os.path.join(session["working-directory"]), "download.nck", as_attachment=True,
-                               attachment_filename=tree_description + ".nck")
+    tree_lengths_json = tree_db[0][1]
+    tree_description = tree_db[0][2]
+
+    if tree_lengths_json is None:
+        tree = Tree(tree_json).to_newick()
+        path = os.path.join(session["working-directory"], "download.nck")
+        file = open(path, "w")
+        file.write(tree + "\n")
+        file.close()
+        return send_from_directory(os.path.join(session["working-directory"]), "download.nck", as_attachment=True,
+                                   attachment_filename=tree_description + ".nck")
+    else:
+        tree_without = Tree(tree_json).to_newick()
+        path_without = os.path.join(session["working-directory"], "without_lengths.nck")
+        file_without = open(path_without, "w")
+        file_without.write(tree_without + "\n")
+        file_without.close()
+
+        tree_with = Tree(tree_lengths_json).to_newick()
+        path_with = os.path.join(session["working-directory"], "with_lengths.nck")
+        file_with = open(path_with, "w")
+        file_with.write(tree_with + "\n")
+        file_with.close()
+
+        zip_path = os.path.join(session["working-directory"], tree_description + '.zip')
+
+        zipfolder = zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_STORED)
+        zipfolder.write(path_without, arcname="without_lengths.nck")
+        zipfolder.write(path_with, arcname="with_lengths.nck")
+        zipfolder.close()
+
+        return send_file(zip_path, mimetype='zip', attachment_filename=tree_description + '.zip', as_attachment=True)
 
 
 @app.route("/description", methods=["POST"])
@@ -151,6 +179,7 @@ def load():
     :return: response
     """
     model = None
+    tree_lengths = None
     conn = sqlite3.connect(root_folder + 'trees.db')
     c = conn.cursor()
     # TODO
@@ -208,6 +237,8 @@ def load():
         if alignment is not None and tree is not None:  # Case 1, alignment and tree given, default behaviour
             with open(os.path.join(session["working-directory"], "alignment.phy"), "w") as alignment_file:
                 alignment_file.write(alignment)
+            if tree.find(":") != -1:
+                tree_lengths = Tree(tree, align_labels=align_labels, enable_lengths=True).to_json()
             tree = Tree(tree, align_labels=align_labels).to_json()
             session["disable_testing"] = False
         elif alignment is not None:  # Case 2, only alignment given, construct ml-tree
@@ -216,22 +247,23 @@ def load():
             if model is not None:
                 print("Starting IQTree. This could take some time!")
                 sp = subprocess.run([os.path.join(app_location, "bin", "iqtree"), "-s",
-                                     os.path.join(session["working-directory"], "alignment.phy"), "-m", model, "-redo"],
-                                    capture_output=True)
+                                     os.path.join(session["working-directory"], "alignment.phy"), "-m", model, "-nt", "AUTO", "-redo"])
                 print(sp)
                 if sp.returncode == 2:
                     print("WRONG DECISION DNA/PROTEIN")
             else:
                 print("Starting IQTree. This could take some time!")
                 sp = subprocess.run([os.path.join(app_location, "bin", "iqtree"), "-s",
-                                     os.path.join(session["working-directory"], "alignment.phy"), "-redo"],
-                                    capture_output=True)
+                                     os.path.join(session["working-directory"], "alignment.phy"), "-nt", "AUTO", "-redo"])
                 print(sp)
             with open(os.path.join(session["working-directory"], "alignment.phy.treefile"), "r") as tree_file:
                 tree = tree_file.readline()
+            tree_lengths = Tree(tree[:-1], align_labels=align_labels, enable_lengths=True).to_json()
             tree = Tree(tree[:-1], align_labels=align_labels).to_json()
             session["disable_testing"] = False
         elif tree is not None:  # Case 3, only tree given, disable testing
+            if tree.find(":") != -1:
+                tree_lengths = Tree(tree, align_labels=align_labels, enable_lengths=True).to_json()
             tree = Tree(tree, align_labels=align_labels).to_json()
             session["disable_testing"] = True
     elif request.method == "GET":  # TODO post too?
@@ -259,7 +291,7 @@ def load():
                 sp = subprocess.run(
                     [os.path.join(app_location, "bin", "iqtree"), "-s", os.path.join(session["working-directory"],
                                                                                      "alignment.phy"),
-                     "-te", path, "-nt", "4", "-m", model, "-redo"], capture_output=True)
+                     "-te", path, "-nt", "AUTO", "-m", model, "-redo"], capture_output=True)
                 print(sp)
                 if sp.returncode == 2:
                     print("WRONG DECISION DNA/PROTEIN")
@@ -283,7 +315,10 @@ def load():
     if request.method == "GET" and request.args.get("lengths") is not None:
         c.execute('UPDATE trees SET json_lengths = ? WHERE id = ?', (tree, session["tree"]))
     else:
-        c.execute('INSERT INTO trees (json, datetime) VALUES (?, datetime("now", "localtime"))', [tree])
+        if tree_lengths:
+            c.execute('INSERT INTO trees (json, json_lengths, datetime) VALUES (?, ?, datetime("now", "localtime"))', [tree, tree_lengths])
+        else:
+            c.execute('INSERT INTO trees (json, datetime) VALUES (?, datetime("now", "localtime"))', [tree])
         session["tree"] = c.lastrowid
         session["trees"].append(session["tree"])
     print(session["trees"])
@@ -413,43 +448,73 @@ def tests():
             if protein_rhas != "-":
                 model += "+" + protein_rhas
     print("Starting IQTree. This could take some time!")
-    sp = subprocess.run(
+    sp = subprocess.Popen(
         [os.path.join(app_location, "bin", "iqtree"), "-s", os.path.join(session["working-directory"], "alignment.phy"),
          "-z",
-         path, "-n", "0", "-zb", "10000", "-zw", "-au", "-m", model, "-redo"])  # TODO capture_output=True
-    print(sp)
-    results = []
-    path = os.path.join(session["working-directory"], "alignment.phy.iqtree")
-    file = open(path, "r")
-    for line in file:
-        if line.startswith(
-                "-------------------------------------------------------------------------------------------"):
-            for j in range(len(snapshots)):
-                results.append(next(file).strip().split())
-    file.close()
-    response = make_response(dumps(results))
+         path, "-n", "0", "-zb", "10000", "-zw", "-au", "-m", model, "-redo"], stdout=subprocess.PIPE)
+    key = str(sp.__hash__())
+    jobs[key] = 0
+    thread = threading.Thread(target=testsupdate, args=[sp])
+    thread.start()
+    response = make_response(str(key))
     response.headers["Cache-Control"] = "no-store"
     return response
 
-"""
-def compute_branch_lengths():
-    tree = Tree(tree_json, json_args, enable_lengths, align_labels).to_newick(True)
-    path = os.path.join(session["working-directory"], "tree.nck")
-    file = open(path, "w")
-    file.write(tree + "\n")
-    file.close()
-    print("Starting IQTree. This could take some time!")
-    sp = subprocess.run(
-        [os.path.join(app_location, "bin", "iqtree"), "-s", os.path.join(session["working-directory"],
-                                                                         "alignment.phy"),
-         "-te", path, "-nt", "4", "-m", model, "-redo"], capture_output=True)
-    print(sp)
-    if sp.returncode == 2:
-        print("WRONG DECISION DNA/PROTEIN")
-    with open(os.path.join(session["working-directory"], "alignment.phy.treefile"), "r") as tree_file:
-        tree = tree_file.readline()
-    tree = Tree(tree[:-1], enable_lengths=enable_lengths, align_labels=align_labels).to_json()
-"""
+
+@app.route("/testsresults/<job_id>", methods=["GET"])
+def testsresults(job_id):
+    """
+    Gets the test results of the given test
+    :param job_id: id of job of the test
+    :return: response
+    """
+    if job_id not in jobs:
+        response = make_response("NO")
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    if jobs[job_id] != 120:
+        response = make_response(str(jobs[job_id]))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    else:
+        results = []
+        path = os.path.join(session["working-directory"], "alignment.phy.iqtree")
+        file = open(path, "r")
+        for line in file:
+            if line.startswith(
+                    "-------------------------------------------------------------------------------------------"):
+                while (result_line := next(file)) != "\n":
+                    results.append(result_line.strip().split())
+        file.close()
+        response = make_response(dumps(results))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+def testsupdate(sp):
+    """
+    Updates the progress of the given test
+    :param sp: subprocess performing the tests
+    :return: None
+    """
+    key = str(sp.__hash__())
+    while True:
+        line = sp.stdout.readline().decode("utf-8")
+        if not line:
+            break
+        if line.startswith("Reading alignment file"):
+            jobs[key] = 20
+        elif line.startswith("Create initial"):
+            jobs[key] = 40
+        elif line.startswith("Reading trees"):
+            jobs[key] = 60
+        elif line.startswith("Creating 10000 bootstrap replicates"):
+            jobs[key] = 80
+        elif line.startswith("Analysis results"):
+            jobs[key] = 100
+        elif line.startswith("Date and Time"):
+            jobs[key] = 120
+
 
 def set_default_config():
     """
