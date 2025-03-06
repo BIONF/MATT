@@ -44,6 +44,10 @@ else:
 config = configparser.ConfigParser()
 config_path = os.path.join(root_folder, "config.ini")
 
+# unset the limits for browser upload to accomodate large alignment files
+app.config['MAX_CONTENT_LENGTH'] = None
+app.config['MAX_FORM_MEMORY_SIZE'] = None
+
 # Sets file rights for the IQTree path
 os.chmod(os.path.join(app_location, "bin", "iqtree" + addition), 0o755)
 
